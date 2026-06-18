@@ -80,7 +80,7 @@ Files:
 | File | Description |
 |---|---|
 | `events.jsonl` | Structured lifecycle, recording, battery, and disconnect events. |
-| `operations.log` | Unparsed operation events from the ring. |
+| `operations.log` | Unparsed operation events from the ring, for diagnostics only. |
 | `audio_chunks.jsonl` | Optional per-audio-chunk diagnostics, created only with `--log-audio-chunks`. |
 | `recording-*.wav` | 16 kHz mono PCM WAV files. |
 

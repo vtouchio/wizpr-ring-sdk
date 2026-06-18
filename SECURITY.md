@@ -11,6 +11,11 @@ This repository contains the WIZPR Ring application SDK and reference desktop va
 
 This SDK is not a firmware control or manufacturing toolkit. It does not intentionally expose raw firmware commands, calibration commands, OTA/DFU controls, or factory diagnostics.
 
+The public SDK's BLE write surface is intentionally limited to SDK-owned session setup and safe status requests:
+
+- `sample_rate 16` is used internally when opening a connection so the SDK receives the documented 16 kHz audio stream.
+- `BATTERY` is exposed through `RingConnection::request_battery_update` to request a battery-status notification.
+
 ## Device Security Boundary
 
 The SDK can reduce misuse by keeping firmware control surfaces out of public APIs, but it is not the only security boundary for a physical BLE device. Device authentication, command authorization, firmware update policy, and low-level BLE access control must be enforced by device firmware and product applications.

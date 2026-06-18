@@ -14,8 +14,8 @@ pub enum RingEvent {
         voltage: f32,
         level: u8,
     },
-    /// Any operation string we did not recognize. The raw bytes are
-    /// surfaced so callers can decide what to do with new firmware codes.
+    /// Any operation string we did not recognize. This is exposed for
+    /// logging and diagnostics, not as a stable firmware-control API.
     Operation {
         raw: String,
     },

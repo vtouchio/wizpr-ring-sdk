@@ -101,7 +101,7 @@ Operation event examples may also appear:
 -> operation event "SAMPLE_RATE: 16\r\n"
 ```
 
-Record any unexpected operation event strings. They may indicate parser gaps that should be added to `wizpr-ring-core`.
+Record any unexpected operation event strings. They may indicate documented operation events that `wizpr-ring-core` does not yet classify.
 
 ### 4. Validate WAV Capture
 

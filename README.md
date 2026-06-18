@@ -21,6 +21,8 @@ This SDK is intended for application integration with WIZPR Ring devices:
 - receive ring events and safe status updates
 - reuse protocol constants, the ADPCM decoder, and WAV utilities
 
+It is not intended to be a firmware-control, manufacturing, calibration, or OTA/DFU toolkit.
+
 ## Quickstart
 
 ```rust
