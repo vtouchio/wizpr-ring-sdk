@@ -50,7 +50,7 @@ Saving session to captures/macos/session-1779190054
 Initializing Bluetooth adapter...
 Scanning for WIZPR Ring (up to 20s)....... connected.
 Audio and event receivers are ready.
--> raw operation "SAMPLE_RATE: 16\r\n"
+-> operation event "SAMPLE_RATE: 16\r\n"
 -> MicOn
 -> recording started +++++++++++++++++++++++++
 -> MicOff
@@ -80,7 +80,7 @@ Files:
 | File | Description |
 |---|---|
 | `events.jsonl` | Structured lifecycle, recording, battery, and disconnect events. |
-| `operations.log` | Raw operation strings from the ring. |
+| `operations.log` | Unparsed operation events from the ring. |
 | `audio_chunks.jsonl` | Optional per-audio-chunk diagnostics, created only with `--log-audio-chunks`. |
 | `recording-*.wav` | 16 kHz mono PCM WAV files. |
 

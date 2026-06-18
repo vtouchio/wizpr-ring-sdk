@@ -95,13 +95,13 @@ Expected examples:
 -> recording saved .\captures\windows\session-...\recording-001.wav (119 chunks, 53312 samples, 3.33s, gain 3.0x, 0 clipped)
 ```
 
-Raw operation examples may also appear:
+Operation event examples may also appear:
 
 ```text
--> raw operation "SAMPLE_RATE: 16\r\n"
+-> operation event "SAMPLE_RATE: 16\r\n"
 ```
 
-Record any unexpected raw operation strings. They may indicate parser gaps or firmware behavior that should be added to `wizpr-ring-core`.
+Record any unexpected operation event strings. They may indicate parser gaps that should be added to `wizpr-ring-core`.
 
 ### 4. Validate WAV Capture
 
@@ -117,7 +117,7 @@ Expected result:
 
 - One WAV file per recording.
 - `events.jsonl` exists and contains structured event lines.
-- `operations.log` exists and contains raw operation lines when the ring emits raw operations.
+- `operations.log` exists and contains operation event lines when the ring emits unparsed operation events.
 - File size grows with recording duration.
 - The file can be opened by a standard audio player or inspection tool.
 
@@ -179,7 +179,7 @@ Disconnect:
 Manual reconnect:
 Long run duration:
 
-Observed raw operations:
+Observed operation events:
 Observed failures:
 Notes:
 ```
