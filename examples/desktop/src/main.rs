@@ -331,10 +331,10 @@ async fn listen(args: ListenArgs) -> Result<(), Box<dyn Error>> {
                     }
                     RingEvent::Operation { raw } => {
                         finish_progress_line(&mut recording_progress_open);
-                        println!("→ raw operation {:?}", raw);
+                        println!("→ operation event {:?}", raw);
                         writeln!(operation_log, "{raw:?}")?;
                         operation_log.flush()?;
-                        event_log.write("raw_operation", [("raw", json_string(&raw))])?;
+                        event_log.write("operation_event", [("event", json_string(&raw))])?;
                     }
                     other => {
                         finish_progress_line(&mut recording_progress_open);

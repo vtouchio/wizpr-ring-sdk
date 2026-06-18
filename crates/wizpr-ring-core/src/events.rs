@@ -268,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_battery_string_remains_raw_operation() {
+    fn malformed_battery_string_remains_unparsed_operation() {
         let RingEvent::Operation { raw } = parse_operation("BATT=unknown") else {
             panic!("expected Operation");
         };
@@ -276,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_strings_become_operation_raw() {
+    fn unknown_strings_become_unparsed_operation() {
         let RingEvent::Operation { raw } = parse_operation("FUTURE_CODE") else {
             panic!("expected Operation");
         };

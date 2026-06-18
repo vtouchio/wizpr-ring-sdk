@@ -144,7 +144,7 @@ impl RingConnection {
     /// This is an allowlisted status request. The public SDK intentionally
     /// does not expose raw firmware command transport.
     pub async fn request_battery_update(&self) -> Result<()> {
-        self.write_operation_command(OperationCommand::BatteryAdc)
+        self.write_operation_command(OperationCommand::BatteryStatus)
             .await
     }
 
@@ -180,14 +180,14 @@ impl Drop for RingConnection {
 #[derive(Debug, Clone, Copy)]
 enum OperationCommand {
     SampleRate16,
-    BatteryAdc,
+    BatteryStatus,
 }
 
 impl OperationCommand {
     const fn as_str(self) -> &'static str {
         match self {
             Self::SampleRate16 => "sample_rate 16",
-            Self::BatteryAdc => "batt_adc",
+            Self::BatteryStatus => "BATTERY",
         }
     }
 }
@@ -433,6 +433,12 @@ mod tests {
         let out = state.handle_notification(WizprBle::OPERATION_CHAR, b"MIC_ON", 1);
 
         assert_eq!(out.events, vec![RingEvent::MicOn]);
+    }
+
+    #[test]
+    fn operation_commands_stay_allowlisted() {
+        assert_eq!(OperationCommand::SampleRate16.as_str(), "sample_rate 16");
+        assert_eq!(OperationCommand::BatteryStatus.as_str(), "BATTERY");
     }
 
     #[test]
