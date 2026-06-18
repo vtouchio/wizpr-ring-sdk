@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>io.wizpr.ring.desktop</string>
+    <key>CFBundleName</key>
+    <string>wizpr-ring-desktop</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Connect to a WIZPR Ring over Bluetooth to receive audio and ring events.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>Connect to a WIZPR Ring over Bluetooth to receive audio and ring events.</string>
+</dict>
+</plist>

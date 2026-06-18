@@ -1,0 +1,17 @@
+[package]
+name = "wizpr-ring-desktop-example"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "wizpr-ring-desktop"
+path = "src/main.rs"
+
+[dependencies]
+wizpr-ring = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }

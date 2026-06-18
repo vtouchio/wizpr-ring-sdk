@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wizpr-ring-core",
+    "crates/wizpr-ring",
+    "examples/desktop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+authors = ["VTouch Inc."]
+repository = "https://github.com/vtouchio/wizpr-ring-sdk-rs"
+homepage = "https://github.com/vtouchio/wizpr-ring-sdk-rs"
+
+[workspace.dependencies]
+wizpr-ring-core = { path = "crates/wizpr-ring-core", version = "0.1.0" }
+wizpr-ring = { path = "crates/wizpr-ring", version = "0.1.0" }
+
+btleplug = "0.11"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+futures = "0.3"
+uuid = "1"
+thiserror = "1"
+tracing = "0.1"
+
+[patch.crates-io]
+# Local btleplug patch for Windows BLE audio diagnostics:
+# the upstream WinRT backend uses a 16-slot notification broadcast buffer,
+# which is too small for WIZPR Ring's high-rate audio notifications.
+btleplug = { path = "vendor/btleplug" }

@@ -1,0 +1,13 @@
+[package]
+name = "wizpr-ring-core"
+description = "Platform-agnostic core for WIZPR Ring: IMA ADPCM codec, event parser, WAV writer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+uuid = { workspace = true }

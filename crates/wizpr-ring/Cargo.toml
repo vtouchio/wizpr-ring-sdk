@@ -1,0 +1,19 @@
+[package]
+name = "wizpr-ring"
+description = "Cross-platform WIZPR Ring SDK (BLE audio streaming) built on btleplug."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+wizpr-ring-core = { workspace = true }
+btleplug = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build all targets
+        run: cargo build --workspace --all-targets
+
+      - name: Test workspace
+        run: cargo test --workspace --all-targets
+
+      - name: Check desktop CLI
+        run: cargo run --bin wizpr-ring-desktop -- --help
+
+      - name: Build desktop release binary
+        run: cargo build --release --bin wizpr-ring-desktop
+
+      - name: Package desktop binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          arch="$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')"
+          case "${{ runner.os }}" in
+            Linux)
+              cp target/release/wizpr-ring-desktop "dist/wizpr-ring-desktop-linux-${arch}"
+              chmod +x "dist/wizpr-ring-desktop-linux-${arch}"
+              ;;
+            macOS)
+              cp target/release/wizpr-ring-desktop "dist/wizpr-ring-desktop-macos-${arch}"
+              chmod +x "dist/wizpr-ring-desktop-macos-${arch}"
+              ;;
+            Windows)
+              cp target/release/wizpr-ring-desktop.exe "dist/wizpr-ring-desktop-windows-${arch}.exe"
+              ;;
+          esac
+
+      - name: Upload desktop binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: wizpr-ring-desktop-${{ runner.os }}-${{ runner.arch }}
+          path: dist/*
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download desktop binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wizpr-ring-desktop-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
