@@ -725,7 +725,11 @@ impl CoreBluetoothInternal {
                 .get_mut(&peripheral_uuid)
                 .expect("If we're here we should have an ID")
                 .confirm_disconnect();
-            self.peripherals.remove(&peripheral_uuid);
+            // Keep the peripheral registered: CBPeripheral objects stay valid for
+            // reconnection, and removing the entry made a later ConnectDevice for
+            // the same handle a silent no-op (its reply future never resolved, so
+            // Peripheral::connect() hung forever). Reconnecting re-runs service
+            // discovery, which replaces the stale service map.
             self.dispatch_event(CoreBluetoothEvent::DeviceDisconnected {
                 uuid: peripheral_uuid,
             })
@@ -856,6 +860,13 @@ impl CoreBluetoothInternal {
             trace!("Connecting peripheral!");
             p.connected_future_state = Some(fut);
             unsafe { self.manager.connectPeripheral_options(&p.peripheral, None) };
+        } else {
+            // Never leave the reply future unresolved — the caller would hang forever.
+            fut.lock()
+                .unwrap()
+                .set_reply(CoreBluetoothReply::Err(String::from(
+                    "Peripheral not known to the central manager",
+                )));
         }
     }
 
@@ -865,6 +876,12 @@ impl CoreBluetoothInternal {
             trace!("Disconnecting peripheral!");
             p.disconnected_future_state = Some(fut);
             unsafe { self.manager.cancelPeripheralConnection(&p.peripheral) };
+        } else {
+            fut.lock()
+                .unwrap()
+                .set_reply(CoreBluetoothReply::Err(String::from(
+                    "Peripheral not known to the central manager",
+                )));
         }
     }
 
@@ -875,6 +892,10 @@ impl CoreBluetoothInternal {
             fut.lock()
                 .unwrap()
                 .set_reply(CoreBluetoothReply::State(state));
+        } else {
+            fut.lock()
+                .unwrap()
+                .set_reply(CoreBluetoothReply::State(CBPeripheralState::Disconnected));
         }
     }
 
