@@ -23,14 +23,21 @@ async fn main() -> wizpr_ring::Result<()> {
             println!("No rings found.");
         }
         for device in devices {
-            println!("  {}  {}", device.id(), device.name().unwrap_or("(unnamed)"));
+            println!(
+                "  {}  {}",
+                device.id(),
+                device.name().unwrap_or("(unnamed)")
+            );
         }
         println!("Re-run with one of the ids above to test pending connect.");
         return Ok(());
     };
 
     let known = scanner.known_ring(&device_id).await?;
-    println!("Retrieved known ring {} — issuing pending connect.", known.id());
+    println!(
+        "Retrieved known ring {} — issuing pending connect.",
+        known.id()
+    );
     println!("(If the ring is powered off, power it on now — waiting indefinitely…)");
 
     let conn = known.connect().await?;
