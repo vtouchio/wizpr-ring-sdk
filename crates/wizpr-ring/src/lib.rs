@@ -26,7 +26,7 @@ pub mod scanner;
 
 pub use connection::RingConnection;
 pub use error::{Error, Result};
-pub use scanner::{RingDevice, RingScanner};
+pub use scanner::{RingDevice, RingScanner, KnownRing};
 
 pub use wizpr_ring_core as core;
 pub use wizpr_ring_core::{AudioChunk, RingEvent};

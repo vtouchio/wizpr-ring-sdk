@@ -31,7 +31,7 @@ use objc2_core_bluetooth::{
     CBCharacteristicProperties, CBCharacteristicWriteType, CBDescriptor, CBManager,
     CBManagerAuthorization, CBManagerState, CBPeripheral, CBPeripheralState, CBService, CBUUID,
 };
-use objc2_foundation::{NSArray, NSData, NSMutableDictionary, NSNumber};
+use objc2_foundation::{NSArray, NSData, NSMutableDictionary, NSNumber, NSString, NSUUID};
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     ffi::CString,
@@ -399,6 +399,12 @@ pub enum CoreBluetoothMessage {
         filter: ScanFilter,
     },
     StopScanning,
+    /// Look up known peripherals by identifier without scanning
+    /// (CoreBluetooth retrievePeripheralsWithIdentifiers:).
+    RetrievePeripherals {
+        peripheral_uuids: Vec<Uuid>,
+        future: CoreBluetoothReplyStateShared,
+    },
     ConnectDevice {
         peripheral_uuid: Uuid,
         future: CoreBluetoothReplyStateShared,
@@ -1169,6 +1175,9 @@ impl CoreBluetoothInternal {
                     },
                     CoreBluetoothMessage::StartScanning{filter} => self.start_discovery(filter),
                     CoreBluetoothMessage::StopScanning => self.stop_discovery(),
+                    CoreBluetoothMessage::RetrievePeripherals{peripheral_uuids, future} => {
+                        self.retrieve_peripherals(peripheral_uuids, future).await
+                    }
                     CoreBluetoothMessage::ConnectDevice{peripheral_uuid, future} => {
                         trace!("got connectdevice msg!");
                         self.connect_peripheral(peripheral_uuid, future);
@@ -1238,6 +1247,48 @@ impl CoreBluetoothInternal {
     fn stop_discovery(&mut self) {
         trace!("BluetoothAdapter::stop_discovery");
         unsafe { self.manager.stopScan() };
+    }
+
+    /// Register previously known peripherals by identifier without scanning.
+    ///
+    /// Uses CoreBluetooth's retrievePeripheralsWithIdentifiers: so a caller can
+    /// issue a pending connect to a device that is currently powered off. Newly
+    /// retrieved peripherals are registered exactly like discovered ones so the
+    /// rest of the stack (connect/subscribe/...) works unchanged.
+    async fn retrieve_peripherals(
+        &mut self,
+        peripheral_uuids: Vec<Uuid>,
+        fut: CoreBluetoothReplyStateShared,
+    ) {
+        trace!("BluetoothAdapter::retrieve_peripherals");
+        let ns_uuids: Vec<Retained<NSUUID>> = peripheral_uuids
+            .iter()
+            .filter_map(|uuid| {
+                let string = NSString::from_str(&uuid.to_string());
+                NSUUID::initWithUUIDString(NSUUID::alloc(), &string)
+            })
+            .collect();
+        let identifiers = NSArray::from_vec(ns_uuids);
+        let retrieved = unsafe { self.manager.retrievePeripheralsWithIdentifiers(&identifiers) };
+
+        for index in 0..retrieved.count() {
+            let peripheral = unsafe { retrieved.objectAtIndex(index) };
+            let uuid = nsuuid_to_uuid(unsafe { &peripheral.identifier() });
+            if self.peripherals.contains_key(&uuid) {
+                continue;
+            }
+            let name = unsafe { peripheral.name() }.map(|n| n.to_string());
+            let (event_sender, event_receiver) = mpsc::channel(256);
+            self.peripherals
+                .insert(uuid, PeripheralInternal::new(peripheral, event_sender));
+            self.dispatch_event(CoreBluetoothEvent::DeviceDiscovered {
+                uuid,
+                name,
+                event_receiver,
+            })
+            .await;
+        }
+        fut.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
     }
 }
 
