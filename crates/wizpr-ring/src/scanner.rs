@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use btleplug::api::{Central, Manager as _, Peripheral as _, PeripheralProperties, ScanFilter};
+#[cfg(target_vendor = "apple")]
+use btleplug::platform::PeripheralId;
 use btleplug::platform::{Adapter, Manager};
 use uuid::Uuid;
 use wizpr_ring_core::WizprBle;
@@ -70,6 +72,44 @@ impl RingDevice {
     }
 }
 
+/// A previously connected ring, retrieved by its stable id without scanning.
+///
+/// On macOS this is backed by CoreBluetooth's
+/// `retrievePeripheralsWithIdentifiers:`, so the device does not need to be
+/// powered on or advertising at retrieval time.
+#[derive(Clone)]
+pub struct KnownRing {
+    peripheral: btleplug::platform::Peripheral,
+}
+
+impl KnownRing {
+    /// Stable platform identifier for this BLE peripheral.
+    pub fn id(&self) -> String {
+        self.peripheral.id().to_string()
+    }
+
+    /// Connect to the ring, waiting indefinitely until it becomes reachable.
+    ///
+    /// The underlying OS connect request has no timeout ("pending connect"):
+    /// if the ring is powered off, this future resolves as soon as the ring
+    /// powers on and the system completes the connection. Use [`cancel`] from
+    /// another task/clone to abort the wait.
+    ///
+    /// [`cancel`]: Self::cancel
+    pub async fn connect(&self) -> Result<RingConnection> {
+        RingConnection::open(self.peripheral.clone()).await
+    }
+
+    /// Cancel a pending connect issued by [`connect`] (or disconnect if the
+    /// connection already completed).
+    ///
+    /// [`connect`]: Self::connect
+    pub async fn cancel(&self) -> Result<()> {
+        self.peripheral.disconnect().await?;
+        Ok(())
+    }
+}
+
 impl RingScanner {
     /// Initialize the scanner using the first available Bluetooth adapter.
     pub async fn new() -> Result<Self> {
@@ -77,6 +117,37 @@ impl RingScanner {
         let adapters = manager.adapters().await?;
         let adapter = adapters.into_iter().next().ok_or(Error::NoAdapter)?;
         Ok(Self { adapter })
+    }
+
+    /// Retrieve a previously connected ring by its stable id without scanning.
+    ///
+    /// `device_id` is the value previously obtained from [`RingDevice::id`].
+    /// Returns [`Error::RingNotFound`] when the platform has no record of the
+    /// identifier. This retrieval flow is currently supported on Apple
+    /// platforms only.
+    pub async fn known_ring(&self, device_id: &str) -> Result<KnownRing> {
+        #[cfg(target_vendor = "apple")]
+        {
+            let uuid = Uuid::parse_str(device_id).map_err(|_| Error::RingNotFound)?;
+            let peripheral = self
+                .adapter
+                .add_peripheral(&PeripheralId::from(uuid))
+                .await
+                .map_err(|err| match err {
+                    btleplug::Error::DeviceNotFound => Error::RingNotFound,
+                    other => Error::Btle(other),
+                })?;
+            Ok(KnownRing { peripheral })
+        }
+
+        #[cfg(not(target_vendor = "apple"))]
+        {
+            let _ = device_id;
+            Err(Error::Btle(btleplug::Error::NotSupported(
+                "retrieving a known ring without scanning is supported on Apple platforms only"
+                    .to_string(),
+            )))
+        }
     }
 
     /// Scan for WIZPR Ring candidates for the full `timeout` window.

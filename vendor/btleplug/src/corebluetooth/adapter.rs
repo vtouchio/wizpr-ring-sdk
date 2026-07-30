@@ -15,6 +15,7 @@ use objc2_core_bluetooth::CBManagerState;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::task;
+use uuid::Uuid;
 
 /// Implementation of [api::Central](crate::api::Central).
 #[derive(Clone, Debug)]
@@ -126,10 +127,30 @@ impl Central for Adapter {
         self.manager.peripheral(id).ok_or(Error::DeviceNotFound)
     }
 
-    async fn add_peripheral(&self, _address: &PeripheralId) -> Result<Peripheral> {
-        Err(Error::NotSupported(
-            "Can't add a Peripheral from a PeripheralId".to_string(),
-        ))
+    async fn add_peripheral(&self, id: &PeripheralId) -> Result<Peripheral> {
+        let uuid =
+            Uuid::parse_str(&id.to_string()).map_err(|_| Error::DeviceNotFound)?;
+        let fut = CoreBluetoothReplyFuture::default();
+        self.sender
+            .to_owned()
+            .send(CoreBluetoothMessage::RetrievePeripherals {
+                peripheral_uuids: vec![uuid],
+                future: fut.get_state_clone(),
+            })
+            .await?;
+        match fut.await {
+            CoreBluetoothReply::Ok => {}
+            _ => return Err(Error::DeviceNotFound),
+        }
+        // DeviceDiscovered 이벤트는 별도 태스크에서 소비되므로, 어댑터 매니저에
+        // 등록될 때까지 잠깐 폴링한다 (즉시 등록되는 것이 보통).
+        for _ in 0..50 {
+            if let Some(peripheral) = self.manager.peripheral(id) {
+                return Ok(peripheral);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        Err(Error::DeviceNotFound)
     }
 
     async fn adapter_info(&self) -> Result<String> {
