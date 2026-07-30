@@ -7,7 +7,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
@@ -16,8 +16,8 @@ repository = "https://github.com/vtouchio/wizpr-ring-sdk"
 homepage = "https://github.com/vtouchio/wizpr-ring-sdk"
 
 [workspace.dependencies]
-wizpr-ring-core = { path = "crates/wizpr-ring-core", version = "0.1.1" }
-wizpr-ring = { path = "crates/wizpr-ring", version = "0.1.1" }
+wizpr-ring-core = { path = "crates/wizpr-ring-core", version = "0.1.2" }
+wizpr-ring = { path = "crates/wizpr-ring", version = "0.1.2" }
 
 btleplug = "0.11"
 clap = { version = "4", features = ["derive"] }

@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "wizpr-ring"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "btleplug",
  "futures",
@@ -1099,14 +1099,14 @@ dependencies = [
 
 [[package]]
 name = "wizpr-ring-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "uuid",
 ]
 
 [[package]]
 name = "wizpr-ring-desktop-example"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "tokio",
