@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use btleplug::api::{Central, Manager as _, Peripheral as _, PeripheralProperties, ScanFilter};
-use btleplug::platform::{Adapter, Manager, PeripheralId};
+#[cfg(target_vendor = "apple")]
+use btleplug::platform::PeripheralId;
+use btleplug::platform::{Adapter, Manager};
 use uuid::Uuid;
 use wizpr_ring_core::WizprBle;
 
@@ -121,18 +123,31 @@ impl RingScanner {
     ///
     /// `device_id` is the value previously obtained from [`RingDevice::id`].
     /// Returns [`Error::RingNotFound`] when the platform has no record of the
-    /// identifier (or on platforms without retrieve support).
+    /// identifier. This retrieval flow is currently supported on Apple
+    /// platforms only.
     pub async fn known_ring(&self, device_id: &str) -> Result<KnownRing> {
-        let uuid = Uuid::parse_str(device_id).map_err(|_| Error::RingNotFound)?;
-        let peripheral = self
-            .adapter
-            .add_peripheral(&PeripheralId::from(uuid))
-            .await
-            .map_err(|err| match err {
-                btleplug::Error::DeviceNotFound => Error::RingNotFound,
-                other => Error::Btle(other),
-            })?;
-        Ok(KnownRing { peripheral })
+        #[cfg(target_vendor = "apple")]
+        {
+            let uuid = Uuid::parse_str(device_id).map_err(|_| Error::RingNotFound)?;
+            let peripheral = self
+                .adapter
+                .add_peripheral(&PeripheralId::from(uuid))
+                .await
+                .map_err(|err| match err {
+                    btleplug::Error::DeviceNotFound => Error::RingNotFound,
+                    other => Error::Btle(other),
+                })?;
+            Ok(KnownRing { peripheral })
+        }
+
+        #[cfg(not(target_vendor = "apple"))]
+        {
+            let _ = device_id;
+            Err(Error::Btle(btleplug::Error::NotSupported(
+                "retrieving a known ring without scanning is supported on Apple platforms only"
+                    .to_string(),
+            )))
+        }
     }
 
     /// Scan for WIZPR Ring candidates for the full `timeout` window.
