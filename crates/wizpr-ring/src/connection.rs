@@ -154,7 +154,12 @@ impl RingConnection {
     }
 
     /// Disconnect from the ring and stop the dispatcher task.
-    pub async fn disconnect(self) -> Result<()> {
+    ///
+    /// Takes `&self` so callers holding the connection behind an `Arc` (or any
+    /// shared handle) can still cancel the OS-level BLE link explicitly —
+    /// dropping a `RingConnection` only aborts the dispatcher and leaves the
+    /// BLE connection up.
+    pub async fn disconnect(&self) -> Result<()> {
         self.shutdown().await
     }
 
