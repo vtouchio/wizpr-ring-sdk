@@ -23,6 +23,16 @@ This SDK is intended for application integration with WIZPR Ring devices:
 
 It is not intended to be a firmware-control, manufacturing, calibration, or OTA/DFU toolkit.
 
+### Ring input lock
+
+`RingConnection::request_lock()` sends the allowlisted `LOCK` operation used by
+the mobile apps. Applications must also maintain their own locked state and
+suppress audio and recording starts while locked. Unlocking is a host-side
+state transition (there is no invented `UNLOCK` command). This API does not
+acknowledge a firmware lock state or automatically interpret button clicks.
+`Click` is emitted after the 1-second double-click window; two clicks emit
+`DoubleClick` instead. Reset or restore the host lock state explicitly on reconnect.
+
 ## Quickstart
 
 ```rust
