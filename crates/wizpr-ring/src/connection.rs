@@ -148,6 +148,13 @@ impl RingConnection {
             .await
     }
 
+    /// Send the same LOCK operation used by the mobile apps.
+    /// The host owns input gating and unlock policy; this command alone does
+    /// not guarantee that audio/recording notifications stop arriving.
+    pub async fn request_lock(&self) -> Result<()> {
+        self.write_operation_command(OperationCommand::Lock).await
+    }
+
     /// Whether the underlying GATT connection is still up.
     pub async fn is_connected(&self) -> bool {
         self.peripheral.is_connected().await.unwrap_or(false)
@@ -186,6 +193,7 @@ impl Drop for RingConnection {
 enum OperationCommand {
     SampleRate16,
     BatteryStatus,
+    Lock,
 }
 
 impl OperationCommand {
@@ -193,6 +201,7 @@ impl OperationCommand {
         match self {
             Self::SampleRate16 => "sample_rate 16",
             Self::BatteryStatus => "BATTERY",
+            Self::Lock => "LOCK",
         }
     }
 }
@@ -386,6 +395,11 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lock_command_matches_mobile_protocol() {
+        assert_eq!(OperationCommand::Lock.as_str(), "LOCK");
+    }
 
     #[test]
     fn audio_notification_decodes_pcm_chunk() {
