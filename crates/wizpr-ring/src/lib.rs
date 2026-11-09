@@ -29,4 +29,4 @@ pub use error::{Error, Result};
 pub use scanner::{KnownRing, RingDevice, RingScanner};
 
 pub use wizpr_ring_core as core;
-pub use wizpr_ring_core::{AudioChunk, RingEvent};
+pub use wizpr_ring_core::{AudioChunk, AudioProcessing, RingEvent};

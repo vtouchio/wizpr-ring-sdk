@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use btleplug::api::{Characteristic, Peripheral as _, WriteType};
@@ -10,8 +10,8 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use wizpr_ring_core::{
-    audio::SAMPLE_RATE_HZ, codec, codec::CodecState, events::parse_operation, transfer_status,
-    AudioChunk, RingEvent, WizprBle,
+    audio::SAMPLE_RATE_HZ, events::parse_operation, transfer_status, AudioChunk, AudioDecoder,
+    AudioProcessing, RingEvent, WizprBle,
 };
 
 use crate::{Error, Result};
@@ -45,6 +45,7 @@ pub struct RingConnection {
     audio_rx: Mutex<Option<AudioRx>>,
     event_rx: Mutex<Option<EventRx>>,
     dispatcher: Mutex<Option<JoinHandle<()>>>,
+    processing: Arc<ProcessingSetting>,
 }
 
 impl RingConnection {
@@ -81,7 +82,13 @@ impl RingConnection {
         let (audio_tx, audio_rx) = mpsc::channel(AUDIO_CHANNEL_CAPACITY);
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
 
-        let dispatcher = tokio::spawn(run_dispatcher(notifications, audio_tx, event_tx));
+        let processing = Arc::new(ProcessingSetting::default());
+        let dispatcher = tokio::spawn(run_dispatcher(
+            notifications,
+            audio_tx,
+            event_tx,
+            Arc::clone(&processing),
+        ));
 
         let conn = Self {
             peripheral,
@@ -89,6 +96,7 @@ impl RingConnection {
             audio_rx: Mutex::new(Some(audio_rx)),
             event_rx: Mutex::new(Some(event_rx)),
             dispatcher: Mutex::new(Some(dispatcher)),
+            processing,
         };
 
         if let Err(err) = conn.configure_ring().await {
@@ -155,6 +163,21 @@ impl RingConnection {
         self.write_operation_command(OperationCommand::Lock).await
     }
 
+    /// Choose how decoded audio is post-processed. Defaults to
+    /// [`AudioProcessing::Raw`].
+    ///
+    /// The change takes effect at the next recording start (or right away
+    /// if no audio has been decoded since the last one), so a recording is
+    /// never half raw and half cleaned.
+    pub fn set_audio_processing(&self, processing: AudioProcessing) {
+        self.processing.set(processing);
+    }
+
+    /// Processing requested with [`set_audio_processing`](Self::set_audio_processing).
+    pub fn audio_processing(&self) -> AudioProcessing {
+        self.processing.get()
+    }
+
     /// Whether the underlying GATT connection is still up.
     pub async fn is_connected(&self) -> bool {
         self.peripheral.is_connected().await.unwrap_or(false)
@@ -206,6 +229,20 @@ impl OperationCommand {
     }
 }
 
+/// Processing mode shared between the connection handle and the dispatcher.
+#[derive(Debug, Default)]
+struct ProcessingSetting(Mutex<AudioProcessing>);
+
+impl ProcessingSetting {
+    fn set(&self, processing: AudioProcessing) {
+        *self.0.lock().unwrap() = processing;
+    }
+
+    fn get(&self) -> AudioProcessing {
+        *self.0.lock().unwrap()
+    }
+}
+
 fn find_char(
     chars: &std::collections::BTreeSet<Characteristic>,
     uuid: Uuid,
@@ -224,6 +261,7 @@ async fn run_dispatcher(
     >,
     audio_tx: mpsc::Sender<AudioChunk>,
     event_tx: mpsc::Sender<RingEvent>,
+    processing: Arc<ProcessingSetting>,
 ) {
     let mut state = DispatchState::new();
     let mut click_armed = false;
@@ -237,6 +275,7 @@ async fn run_dispatcher(
 
             notif = notifications.next() => {
                 let Some(notif) = notif else { break };
+                state.set_processing(processing.get());
                 let out = state.handle_notification(notif.uuid, &notif.value, now_ms());
                 if let Some(chunk) = out.audio {
                     if audio_tx.send(chunk).await.is_err() { break; }
@@ -272,13 +311,23 @@ async fn run_dispatcher(
 
 #[derive(Debug, Default)]
 struct DispatchState {
-    codec_state: CodecState,
+    decoder: AudioDecoder,
+    /// Between a recording start (`'1'`) and its stop (`'0'` / `MIC_OFF`).
+    recording: bool,
+    /// `MIC_ON` seen while not recording, waiting for its `'1'`.
+    mic_on_pending: bool,
+    /// The current recording already got its own `MIC_ON`.
+    mic_on_paired: bool,
     click_count: u32,
 }
 
 impl DispatchState {
     fn new() -> Self {
         Self::default()
+    }
+
+    fn set_processing(&mut self, processing: AudioProcessing) {
+        self.decoder.set_processing(processing);
     }
 
     fn handle_notification(
@@ -303,7 +352,7 @@ impl DispatchState {
     }
 
     fn handle_audio(&mut self, value: &[u8], timestamp_ms: u64) -> DispatchOutput {
-        let pcm = codec::decode(value, &mut self.codec_state);
+        let pcm = self.decoder.decode(value);
         DispatchOutput {
             audio: Some(AudioChunk {
                 pcm_samples: pcm,
@@ -321,10 +370,15 @@ impl DispatchState {
 
         let event = match first {
             transfer_status::START => {
-                self.codec_state = CodecState::new();
+                self.decoder.reset_segment();
+                self.recording = true;
+                self.mic_on_paired = std::mem::take(&mut self.mic_on_pending);
                 RingEvent::RecordingStarted
             }
-            transfer_status::STOP => RingEvent::RecordingStopped,
+            transfer_status::STOP => {
+                self.end_recording();
+                RingEvent::RecordingStopped
+            }
             _ => return DispatchOutput::default(),
         };
 
@@ -340,10 +394,39 @@ impl DispatchState {
             return self.handle_click();
         }
 
+        let event = parse_operation(&text);
+        match event {
+            RingEvent::MicOn => self.handle_mic_on(),
+            RingEvent::MicOff => self.end_recording(),
+            _ => {}
+        }
+
         DispatchOutput {
-            events: vec![parse_operation(&text)],
+            events: vec![event],
             ..DispatchOutput::default()
         }
+    }
+
+    /// `MIC_ON` and `'1'` arrive on different characteristics in either
+    /// order. The first `MIC_ON` of a recording is its pair and leaves the
+    /// decoder alone; another one while recording means the previous stop
+    /// was lost and the ring restarted its encoder, so start a new segment.
+    fn handle_mic_on(&mut self) {
+        if !self.recording {
+            self.mic_on_pending = true;
+        } else if !self.mic_on_paired {
+            self.mic_on_paired = true;
+        } else {
+            // This MIC_ON belongs to the new recording; its '1' may follow.
+            self.decoder.reset_segment();
+            self.mic_on_pending = true;
+        }
+    }
+
+    fn end_recording(&mut self) {
+        self.recording = false;
+        self.mic_on_pending = false;
+        self.mic_on_paired = false;
     }
 
     fn handle_click(&mut self) -> DispatchOutput {
@@ -395,6 +478,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wizpr_ring_core::CodecState;
 
     #[test]
     fn lock_command_matches_mobile_protocol() {
@@ -417,14 +501,177 @@ mod tests {
     fn transfer_start_resets_codec_and_emits_event() {
         let mut state = DispatchState::new();
         state.handle_notification(WizprBle::AUDIO_CHAR, &[0x77; 4], 1);
-        assert_ne!(state.codec_state.step_index(), 0);
+        assert_ne!(state.decoder.codec_state().step_index(), 0);
 
         let out =
             state.handle_notification(WizprBle::TRANSFER_STATUS_CHAR, &[transfer_status::START], 2);
 
         assert_eq!(out.events, vec![RingEvent::RecordingStarted]);
-        assert_eq!(state.codec_state.step_index(), 0);
-        assert_eq!(state.codec_state.predicted_sample(), 0);
+        assert_eq!(state.decoder.codec_state().step_index(), 0);
+        assert_eq!(state.decoder.codec_state().predicted_sample(), 0);
+    }
+
+    /// Normal recording start: `MIC_ON`, then `'1'`, then audio.
+    fn start_recording_with_audio(state: &mut DispatchState) {
+        state.handle_notification(WizprBle::OPERATION_CHAR, b"MIC_ON", 1);
+        state.handle_notification(WizprBle::TRANSFER_STATUS_CHAR, &[transfer_status::START], 1);
+        state.handle_notification(WizprBle::AUDIO_CHAR, &[0x77; 4], 2);
+        assert_ne!(state.decoder.codec_state().step_index(), 0);
+    }
+
+    #[test]
+    fn mic_on_during_recording_resets_decoder() {
+        let mut state = DispatchState::new();
+        start_recording_with_audio(&mut state);
+
+        // The stop was lost; a new recording starts with MIC_ON.
+        let out = state.handle_notification(WizprBle::OPERATION_CHAR, b"MIC_ON", 3);
+
+        assert_eq!(out.events, vec![RingEvent::MicOn]);
+        assert_eq!(state.decoder.codec_state().step_index(), 0);
+        assert_eq!(state.decoder.codec_state().predicted_sample(), 0);
+    }
+
+    #[test]
+    fn mic_on_arriving_after_its_start_keeps_decoder() {
+        let mut state = DispatchState::new();
+        state.handle_notification(WizprBle::TRANSFER_STATUS_CHAR, &[transfer_status::START], 1);
+        state.handle_notification(WizprBle::AUDIO_CHAR, &[0x77; 4], 2);
+        let before = state.decoder.codec_state();
+
+        state.handle_notification(WizprBle::OPERATION_CHAR, b"MIC_ON", 3);
+        assert_eq!(state.decoder.codec_state(), before);
+
+        // A second MIC_ON in the same recording is a new encoder run.
+        state.handle_notification(WizprBle::OPERATION_CHAR, b"MIC_ON", 4);
+        assert_eq!(state.decoder.codec_state().step_index(), 0);
+    }
+
+    #[test]
+    fn mic_on_after_recording_stopped_keeps_decoder() {
+        for stop in [&b"MIC_OFF"[..], &[transfer_status::STOP][..]] {
+            let mut state = DispatchState::new();
+            start_recording_with_audio(&mut state);
+            let uuid = if stop == b"MIC_OFF" {
+                WizprBle::OPERATION_CHAR
+            } else {
+                WizprBle::TRANSFER_STATUS_CHAR
+            };
+            state.handle_notification(uuid, stop, 3);
+            let before = state.decoder.codec_state();
+
+            state.handle_notification(WizprBle::OPERATION_CHAR, b"MIC_ON", 4);
+
+            assert_eq!(state.decoder.codec_state(), before);
+        }
+    }
+
+    #[test]
+    fn lost_stops_in_a_row_each_reset_on_mic_on() {
+        let mut state = DispatchState::new();
+        start_recording_with_audio(&mut state);
+
+        for t in 0..3 {
+            // Stop lost; next recording sends MIC_ON then '1'.
+            state.handle_notification(WizprBle::OPERATION_CHAR, b"MIC_ON", 10 + t);
+            assert_eq!(state.decoder.codec_state(), CodecState::new());
+            state.handle_notification(
+                WizprBle::TRANSFER_STATUS_CHAR,
+                &[transfer_status::START],
+                10 + t,
+            );
+            state.handle_notification(WizprBle::AUDIO_CHAR, &[0x77; 4], 10 + t);
+            assert_ne!(state.decoder.codec_state(), CodecState::new());
+        }
+
+        // Stop and '1' both lost: MIC_ON alone must still reset.
+        state.handle_notification(WizprBle::OPERATION_CHAR, b"MIC_ON", 20);
+        assert_eq!(state.decoder.codec_state(), CodecState::new());
+    }
+
+    /// Raw output of normal recordings, with MIC_ON before or after '1',
+    /// must equal a plain decode reset at each '1'.
+    #[test]
+    fn raw_dispatch_output_matches_plain_decode() {
+        let packets: Vec<Vec<u8>> = (0u8..40)
+            .map(|i| {
+                (0..112)
+                    .map(|j: u8| i.wrapping_mul(31).wrapping_add(j.wrapping_mul(7)))
+                    .collect()
+            })
+            .collect();
+        let start = (WizprBle::TRANSFER_STATUS_CHAR, vec![transfer_status::START]);
+        let stop = (WizprBle::TRANSFER_STATUS_CHAR, vec![transfer_status::STOP]);
+        let mic_on = (WizprBle::OPERATION_CHAR, b"MIC_ON".to_vec());
+        let mic_off = (WizprBle::OPERATION_CHAR, b"MIC_OFF".to_vec());
+        let audio = |p: &Vec<u8>| (WizprBle::AUDIO_CHAR, p.clone());
+
+        let mut script = Vec::new();
+        let mut expected = Vec::new();
+        for (rec, chunk) in packets.chunks(10).enumerate() {
+            if rec % 2 == 0 {
+                script.extend([mic_on.clone(), start.clone()]);
+                script.extend(chunk.iter().map(audio));
+            } else {
+                // MIC_ON arrives after '1' and the first audio packets.
+                script.push(start.clone());
+                script.extend(chunk[..3].iter().map(audio));
+                script.push(mic_on.clone());
+                script.extend(chunk[3..].iter().map(audio));
+            }
+            script.extend([mic_off.clone(), stop.clone()]);
+
+            let mut reference = CodecState::new();
+            for p in chunk {
+                expected.extend(wizpr_ring_core::codec::decode(p, &mut reference));
+            }
+        }
+
+        let mut state = DispatchState::new();
+        let got: Vec<i16> = script
+            .iter()
+            .filter_map(|(uuid, value)| state.handle_notification(*uuid, value, 0).audio)
+            .flat_map(|chunk| chunk.pcm_samples)
+            .collect();
+
+        let to_bytes = |s: &[i16]| s.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        assert_eq!(to_bytes(&got), to_bytes(&expected));
+    }
+
+    #[test]
+    fn mic_pre_on_is_an_event_and_keeps_decoder() {
+        let mut state = DispatchState::new();
+        start_recording_with_audio(&mut state);
+        let before = state.decoder.codec_state();
+
+        let out = state.handle_notification(WizprBle::OPERATION_CHAR, b"MIC_PRE_ON", 3);
+
+        assert_eq!(out.events, vec![RingEvent::MicPreOn]);
+        assert_eq!(state.decoder.codec_state(), before);
+    }
+
+    #[test]
+    fn processing_switches_at_next_recording_start() {
+        let mut state = DispatchState::new();
+        start_recording_with_audio(&mut state);
+
+        state.set_processing(AudioProcessing::Clean);
+        let raw = state.handle_notification(WizprBle::AUDIO_CHAR, &[0x77; 4], 3);
+        assert!(raw.audio.unwrap().pcm_samples.iter().any(|&s| s != 0));
+
+        state.handle_notification(WizprBle::TRANSFER_STATUS_CHAR, &[transfer_status::START], 4);
+        let clean = state.handle_notification(WizprBle::AUDIO_CHAR, &[0x77; 4], 5);
+        assert!(clean.audio.unwrap().pcm_samples.iter().all(|&s| s == 0));
+    }
+
+    #[test]
+    fn processing_setting_round_trips() {
+        let setting = ProcessingSetting::default();
+        assert_eq!(setting.get(), AudioProcessing::Raw);
+        setting.set(AudioProcessing::Clean);
+        assert_eq!(setting.get(), AudioProcessing::Clean);
+        setting.set(AudioProcessing::Raw);
+        assert_eq!(setting.get(), AudioProcessing::Raw);
     }
 
     #[test]
