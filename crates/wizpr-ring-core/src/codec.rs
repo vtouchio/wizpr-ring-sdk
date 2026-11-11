@@ -16,7 +16,7 @@ const STEP_TABLE: [i32; 89] = [
 const STEP_ADJUST: [i32; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
 
 /// Streaming codec state carried across BLE packets.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CodecState {
     predicted_sample: i32,
     step_index: i32,
@@ -30,7 +30,9 @@ impl CodecState {
         }
     }
 
-    /// Current predicted PCM sample.
+    /// Current predicted PCM sample. Within an `i16` for [`decode`]; in an
+    /// [`AudioProcessing::Clean`](crate::AudioProcessing::Clean) segment it is
+    /// the unclamped accumulator and may exceed the `i16` range.
     pub const fn predicted_sample(&self) -> i32 {
         self.predicted_sample
     }
@@ -65,7 +67,32 @@ pub fn decode_into(data: &[u8], state: &mut CodecState, out: &mut Vec<i16>) {
 }
 
 fn decode_sample(nibble: u8, state: &mut CodecState) -> i16 {
-    let step = STEP_TABLE[state.step_index as usize];
+    let sample = (state.predicted_sample + nibble_diff(nibble, state.step_index))
+        .clamp(i16::MIN as i32, i16::MAX as i32);
+    state.predicted_sample = sample;
+    advance_step_index(nibble, state);
+    sample as i16
+}
+
+/// Bound for the wide accumulator. Real audio never gets close; it only
+/// keeps a corrupt stream from overflowing `i32`.
+const WIDE_LIMIT: i32 = 1 << 24;
+
+/// Decode one nibble without clamping the predictor to `i16`.
+///
+/// When the decoder is offset from the encoder by `d`, clamping at
+/// ±32767 clips the decoder before the encoder and changes `d`. Keeping
+/// the accumulator wide keeps `d` constant so a DC blocker can remove it.
+pub(crate) fn decode_sample_wide(nibble: u8, state: &mut CodecState) -> i32 {
+    let sample = (state.predicted_sample + nibble_diff(nibble, state.step_index))
+        .clamp(-WIDE_LIMIT, WIDE_LIMIT);
+    state.predicted_sample = sample;
+    advance_step_index(nibble, state);
+    sample
+}
+
+fn nibble_diff(nibble: u8, step_index: i32) -> i32 {
+    let step = STEP_TABLE[step_index as usize];
     let mut diff = step >> 3;
     if nibble & 0x01 != 0 {
         diff += step >> 2;
@@ -79,13 +106,59 @@ fn decode_sample(nibble: u8, state: &mut CodecState) -> i16 {
     if nibble & 0x08 != 0 {
         diff = -diff;
     }
+    diff
+}
 
-    let sample = (state.predicted_sample + diff).clamp(i16::MIN as i32, i16::MAX as i32);
-    state.predicted_sample = sample;
-
+fn advance_step_index(nibble: u8, state: &mut CodecState) {
     state.step_index = (state.step_index + STEP_ADJUST[(nibble & 0x07) as usize]).clamp(0, 88);
+}
 
-    sample as i16
+/// Reference IMA ADPCM encoder used only by tests to model the ring.
+#[cfg(test)]
+pub(crate) mod test_encoder {
+    use super::{decode_sample, CodecState, STEP_TABLE};
+
+    /// Encode one sample, returning the nibble. `state` tracks the
+    /// encoder's own reconstruction, exactly as the ring keeps it.
+    pub(crate) fn encode_sample(sample: i16, state: &mut CodecState) -> u8 {
+        let step = STEP_TABLE[state.step_index as usize];
+        let mut diff = i32::from(sample) - state.predicted_sample;
+        let mut nibble = 0u8;
+        if diff < 0 {
+            nibble = 0x08;
+            diff = -diff;
+        }
+        if diff >= step {
+            nibble |= 0x04;
+            diff -= step;
+        }
+        if diff >= step >> 1 {
+            nibble |= 0x02;
+            diff -= step >> 1;
+        }
+        if diff >= step >> 2 {
+            nibble |= 0x01;
+        }
+        // The encoder reconstructs with the same arithmetic as the decoder.
+        decode_sample(nibble, state);
+        nibble
+    }
+
+    /// Encode samples into packed bytes (high nibble first), returning the
+    /// bytes and the encoder's reconstruction of each sample.
+    pub(crate) fn encode(samples: &[i16], state: &mut CodecState) -> (Vec<u8>, Vec<i16>) {
+        assert!(samples.len() % 2 == 0, "encode an even number of samples");
+        let mut bytes = Vec::with_capacity(samples.len() / 2);
+        let mut recon = Vec::with_capacity(samples.len());
+        for pair in samples.chunks_exact(2) {
+            let high = encode_sample(pair[0], state);
+            recon.push(state.predicted_sample() as i16);
+            let low = encode_sample(pair[1], state);
+            recon.push(state.predicted_sample() as i16);
+            bytes.push((high << 4) | low);
+        }
+        (bytes, recon)
+    }
 }
 
 #[cfg(test)]
@@ -145,6 +218,24 @@ mod tests {
                 let _ = s;
             }
         }
+    }
+
+    #[test]
+    fn test_encoder_round_trips_through_decoder() {
+        let input: Vec<i16> = (0..2000)
+            .map(|n| ((n as f32 * 0.05).sin() * 8000.0) as i16)
+            .collect();
+        let (bytes, recon) = test_encoder::encode(&input, &mut CodecState::new());
+        let decoded = decode(&bytes, &mut CodecState::new());
+        assert_eq!(decoded, recon);
+        let max_err = input
+            .iter()
+            .zip(&decoded)
+            .skip(200)
+            .map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs())
+            .max()
+            .unwrap();
+        assert!(max_err < 600, "max_err = {max_err}");
     }
 
     #[test]

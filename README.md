@@ -62,6 +62,19 @@ async fn main() -> wizpr_ring::Result<()> {
 }
 ```
 
+### Audio processing
+
+Audio is decoded as-is by default (`AudioProcessing::Raw`). Speech apps can
+opt in to `AudioProcessing::Clean`, which removes DC offset per recording and
+mutes the first 42 ms of each recording:
+
+```rust
+conn.set_audio_processing(wizpr_ring::AudioProcessing::Clean);
+```
+
+The setting applies from the next recording start. `RingEvent::MicPreOn` is
+emitted when the ring enters its ready state before a recording.
+
 ## Build & test
 
 ```sh

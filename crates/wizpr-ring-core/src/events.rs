@@ -3,6 +3,12 @@
 /// Events emitted by the WIZPR Ring during operation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RingEvent {
+    /// The ring entered its ready state (`MIC_PRE_ON`). Audio of a
+    /// recording that follows may carry a DC offset; see
+    /// [`AudioProcessing::Clean`].
+    ///
+    /// [`AudioProcessing::Clean`]: crate::AudioProcessing::Clean
+    MicPreOn,
     MicOn,
     MicOff,
     RecordingStarted,
@@ -120,6 +126,9 @@ pub fn parse_operation(text: &str) -> RingEvent {
     if text.contains("POWER_OFF") {
         return RingEvent::PowerOff;
     }
+    if text.contains("MIC_PRE_ON") {
+        return RingEvent::MicPreOn;
+    }
     if text.contains("MIC_ON") {
         return RingEvent::MicOn;
     }
@@ -208,6 +217,7 @@ mod tests {
 
     #[test]
     fn parses_simple_keywords() {
+        assert_eq!(parse_operation("MIC_PRE_ON"), RingEvent::MicPreOn);
         assert_eq!(parse_operation("MIC_ON"), RingEvent::MicOn);
         assert_eq!(parse_operation("MIC_OFF"), RingEvent::MicOff);
         assert_eq!(parse_operation("POWER_OFF"), RingEvent::PowerOff);

@@ -8,8 +8,10 @@ pub mod audio;
 pub mod codec;
 pub mod constants;
 pub mod events;
+pub mod processing;
 
 pub use audio::{write_wav, AudioChunk, SAMPLE_RATE_HZ};
 pub use codec::{decode, decode_into, CodecState};
 pub use constants::{transfer_status, WizprBle};
 pub use events::{parse_operation, RingEvent};
+pub use processing::{AudioDecoder, AudioProcessing};
