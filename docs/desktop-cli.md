@@ -94,6 +94,43 @@ The SDK decodes IMA ADPCM into 16 kHz mono PCM. In recent macOS captures, one au
 
 That is about 35.7 audio chunks per second. A five second recording should therefore contain roughly 178 chunks, though BLE scheduling can make chunk timing uneven.
 
+### Event order
+
+A recording that starts from idle produces `MicOn`, then `RecordingStarted`, then `MicOff`, then `RecordingStopped`. A recording that passes through the ring's ready state is preceded by `MicPreOn`. The CLI logs it as `-> MicPreOn` and writes it to `events.jsonl` as `{"event":"event","name":"MicPreOn"}`. A ready state that does not lead to a recording ends with `MicOff`.
+
+Short presses still produce one recording each. Back-to-back recordings should never be merged into one file or dropped.
+
+### Start of a recording
+
+The two ways a recording can start look different:
+
+- **From idle:** the first ~22 ms holds a large start transient. That transient is part of the signal the ring sends, not a decoding error. Raw recordings keep it. `AudioProcessing::Clean` mutes the first 42 ms of each recording, which covers it.
+- **After the ready state:** no start transient. The recording starts at the normal signal level.
+
+Very short presses (under ~0.4 s) can yield only one or two chunks, about 56 ms of audio. That audio is mostly the start transient and can reach full scale.
+
+### Measuring DC offset and peaks
+
+Capture with `--wav-gain 1` so the WAV holds the SDK samples unchanged. With the default gain of 3.0, the offset and peaks are scaled and may clip. Then summarize the session:
+
+```sh
+cargo run --bin wizpr-ring-desktop -- listen --wav-gain 1 --output-dir ./captures/macos
+python3 scripts/wav_stats.py ./captures/macos/session-<id>
+```
+
+`wav_stats.py` uses only the Python standard library. For each recording it prints:
+
+| Column | Meaning |
+|---|---|
+| `dc>42ms` | Mean of all samples after the first 42 ms, the span `Clean` mutes. Shown as `-` when less than 0.5 s of audio remains after the skip. |
+| `pk<22ms`, `pk22-42` | Peak absolute value in the first 22 ms and in 22–42 ms: the start transient. |
+| `pk>42ms` | Peak absolute value after 42 ms. |
+| `clip` | Number of samples at ±32767/−32768. |
+
+Compare recordings by how they started. The DC offset that `Clean` removes depends on the signal level at the moment a recording starts, so include recordings that start while you are already speaking loudly.
+
+The desktop CLI records `Raw` only, so these steps do not exercise `AudioProcessing::Clean`.
+
 ## Validation Checklist
 
 Use the same basic flow on macOS and Windows:
@@ -102,17 +139,19 @@ Use the same basic flow on macOS and Windows:
 2. Run `list` and confirm the target ring appears.
 3. Run `listen` with a platform-specific output directory, optionally passing `--device-id`.
 4. Confirm scan and connect complete.
-5. Trigger `MicOn` / `MicOff`.
+5. Trigger `MicOn` / `MicOff`. Record a few recordings that start from idle, a few that pass through the ready state (`MicPreOn` first), and a few short presses.
 6. Confirm a WAV file is created and playable.
-7. Confirm `events.jsonl` contains `recording_saved`.
-8. Turn off or disconnect the ring and confirm the CLI reports a disconnect reason.
+7. Confirm `events.jsonl` contains `recording_saved`, and that the event order matches [Event order](#event-order) with one recording per press.
+8. Run `scripts/wav_stats.py` on the session and note `dc>42ms`, the start peaks, and clipping per start type. Recordings from idle should show the start transient and recordings after the ready state should not ([Start of a recording](#start-of-a-recording)).
+9. Turn off or disconnect the ring and confirm the CLI reports a disconnect reason.
 
 Recommended commands:
 
 ```sh
 cargo test --workspace --all-targets
 cargo run --bin wizpr-ring-desktop -- list
-cargo run --bin wizpr-ring-desktop -- listen --output-dir ./captures/macos
+cargo run --bin wizpr-ring-desktop -- listen --wav-gain 1 --output-dir ./captures/macos
+python3 scripts/wav_stats.py ./captures/macos/session-<id>
 ```
 
 On Windows PowerShell:
@@ -120,7 +159,8 @@ On Windows PowerShell:
 ```powershell
 cargo test --workspace --all-targets
 cargo run --bin wizpr-ring-desktop -- list
-cargo run --bin wizpr-ring-desktop -- listen --output-dir .\captures\windows
+cargo run --bin wizpr-ring-desktop -- listen --wav-gain 1 --output-dir .\captures\windows
+python scripts\wav_stats.py .\captures\windows\session-<id>
 ```
 
 ## CI Artifacts

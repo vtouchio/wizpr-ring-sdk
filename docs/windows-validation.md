@@ -62,8 +62,10 @@ Expected result:
 ### 2. Run the Desktop Listener
 
 ```powershell
-cargo run --bin wizpr-ring-desktop -- listen --output-dir .\captures\windows
+cargo run --bin wizpr-ring-desktop -- listen --wav-gain 1 --output-dir .\captures\windows
 ```
+
+`--wav-gain 1` writes the SDK samples unchanged, so the audio checks in step 4 measure real values. The default gain of 3.0 is easier to listen to, but it scales the offset and peaks and can clip.
 
 Expected startup output:
 
@@ -103,6 +105,14 @@ Operation event examples may also appear:
 
 Record any unexpected operation event strings. They may indicate documented operation events that `wizpr-ring-core` does not yet classify.
 
+Exercise the three ways a recording can start, a few times each:
+
+- From idle: `MicOn` with no `MicPreOn` before it.
+- After the ready state: `-> MicPreOn`, then `MicOn`.
+- Short presses of under ~0.4 s.
+
+Confirm that each press produces exactly one `recording saved` line and that no recording is merged or dropped. The expected order is in [Event order](desktop-cli.md#event-order).
+
 ### 4. Validate WAV Capture
 
 After a recording stops, confirm that a WAV file was created:
@@ -120,6 +130,14 @@ Expected result:
 - `operations.log` exists and contains operation event lines when the ring emits unparsed operation events.
 - File size grows with recording duration.
 - The file can be opened by a standard audio player or inspection tool.
+
+Summarize the audio of the session (Python 3, standard library only):
+
+```powershell
+python scripts\wav_stats.py .\captures\windows\session-<id>
+```
+
+For each start type, note `dc>42ms` (mean after the first 42 ms), the start peaks `pk<22ms` and `pk22-42`, and `clip`. Recordings from idle should show a large start transient in the first ~22 ms, and recordings after the ready state should not. See [Start of a recording](desktop-cli.md#start-of-a-recording).
 
 For packet-level diagnostics, run with `--log-audio-chunks`:
 
@@ -174,7 +192,9 @@ Adapter init:
 Scan:
 Connect:
 Events:
+Event order (idle / ready / short press):
 Audio/WAV:
+wav_stats (per start type: dc>42ms, pk<22ms, pk22-42, clip):
 Disconnect:
 Manual reconnect:
 Long run duration:
